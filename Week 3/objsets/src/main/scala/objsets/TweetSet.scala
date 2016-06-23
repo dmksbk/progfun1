@@ -1,5 +1,6 @@
 package objsets
 
+import common._
 import TweetReader._
 
 /**
@@ -15,7 +16,7 @@ class Tweet(val user: String, val text: String, val retweets: Int) {
  * This represents a set of objects of type `Tweet` in the form of a binary search
  * tree. Every branch in the tree has two children (two `TweetSet`s). There is an
  * invariant which always holds: for every branch `b`, all elements in the left
- * subtree are smaller than the tweet at `b`. The elements in the right subtree are
+ * subtree are smaller than the tweet at `b`. The eleemnts in the right subtree are
  * larger.
  *
  * Note that the above structure requires us to be able to compare two tweets (we
@@ -41,12 +42,23 @@ abstract class TweetSet {
    * Question: Can we implment this method here, or should it remain abstract
    * and be implemented in the subclasses?
    */
-    def filter(p: Tweet => Boolean): TweetSet = ???
-  
+  def filter(p: Tweet => Boolean): TweetSet =
+    filterAcc(p, new Empty)
+    
+  def isEmpty: Boolean
+    
   /**
    * This is a helper method for `filter` that propagetes the accumulated tweets.
    */
   def filterAcc(p: Tweet => Boolean, acc: TweetSet): TweetSet
+  
+  // Return all tweets for which key < u
+  def getLessThen(u: String): TweetSet
+  // Return all tweets for which key > u
+  def getGraterThen(d: String): TweetSet
+  // Return all tweets for which d < key < u
+  def getInterval(d: String, u: String): TweetSet =
+    getLessThen(u).getGraterThen(d)
 
   /**
    * Returns a new `TweetSet` that is the union of `TweetSet`s `this` and `that`.
@@ -54,8 +66,8 @@ abstract class TweetSet {
    * Question: Should we implment this method here, or should it remain abstract
    * and be implemented in the subclasses?
    */
-    def union(that: TweetSet): TweetSet = ???
-  
+   def union(that: TweetSet): TweetSet
+
   /**
    * Returns the tweet from this set which has the greatest retweet count.
    *
@@ -65,8 +77,8 @@ abstract class TweetSet {
    * Question: Should we implment this method here, or should it remain abstract
    * and be implemented in the subclasses?
    */
-    def mostRetweeted: Tweet = ???
-  
+  def mostRetweeted: Tweet
+
   /**
    * Returns a list containing all tweets of this set, sorted by retweet count
    * in descending order. In other words, the head of the resulting list should
@@ -76,8 +88,9 @@ abstract class TweetSet {
    * Question: Should we implment this method here, or should it remain abstract
    * and be implemented in the subclasses?
    */
-    def descendingByRetweet: TweetList = ???
-  
+  def descendingByRetweet: TweetList
+
+
   /**
    * The following methods are already implemented
    */
@@ -107,8 +120,21 @@ abstract class TweetSet {
 }
 
 class Empty extends TweetSet {
-    def filterAcc(p: Tweet => Boolean, acc: TweetSet): TweetSet = ???
+
+  def filterAcc(p: Tweet => Boolean, acc: TweetSet): TweetSet = acc
   
+  def getLessThen(u: String): TweetSet = this
+  def getGraterThen(d: String): TweetSet = this
+  
+  def union(that: TweetSet): TweetSet = that
+  
+  def isEmpty: Boolean = true
+  
+  def mostRetweeted: Tweet =
+    throw new java.util.NoSuchElementException("Empty.mostRetweeted")
+  
+  def descendingByRetweet: TweetList = Nil
+
   /**
    * The following methods are already implemented
    */
@@ -122,11 +148,97 @@ class Empty extends TweetSet {
   def foreach(f: Tweet => Unit): Unit = ()
 }
 
-class NonEmpty(elem: Tweet, left: TweetSet, right: TweetSet) extends TweetSet {
+class NonEmpty(val elem: Tweet, val left: TweetSet, val right: TweetSet) extends TweetSet {
 
-    def filterAcc(p: Tweet => Boolean, acc: TweetSet): TweetSet = ???
-  
+  def filterAcc(p: Tweet => Boolean, acc: TweetSet): TweetSet = { 
+    val res = left.filterAcc(p, right.filterAcc(p, acc))
+    if (p(elem)) res incl elem else res
+  }
     
+  def getGraterThen(d: String): TweetSet =
+    if (elem.text == d) right
+    else if (elem.text < d) right.getGraterThen(d)
+    else new NonEmpty(elem, left.getGraterThen(d), right)
+  
+  def getLessThen(u: String): TweetSet =
+    if (elem.text == u) left
+    else if (elem.text > u) left.getLessThen(u)
+    else new NonEmpty(elem, left, right.getLessThen(u))
+  
+  /* Version 1 (too slow)
+  left union right union that incl elem
+  */
+  
+  /* Version 2 (works fine)
+  def union(that: TweetSet): TweetSet = that match {
+    case _:  Empty =>
+      this
+    
+    case ne: NonEmpty if ne.elem.text < elem.text =>
+    	union3(ne, this)
+    
+    case ne: NonEmpty if ne.elem.text > elem.text =>
+    	union3(this, ne)
+      
+    case ne: NonEmpty=>
+      new NonEmpty(elem, left union ne.left, right union ne.right)
+  }
+  
+  // a.elem.text < b.elem>text (!!!)
+  def union3(a: NonEmpty, b: NonEmpty): NonEmpty =
+    union2(a.elem, b.elem,
+        a.left union b.left.filter(t => t.text < a.elem.text),
+        a.right.filter(t => t.text < b.elem.text) union b.left.filter(t => t.text > a.elem.text),
+        b.right union a.right.filter(t => t.text > b.elem.text)
+    )
+  
+  // a.text < b.text (!!!)
+  def union2(a: Tweet, b: Tweet, l: TweetSet, c: TweetSet, r: TweetSet): NonEmpty =
+    new NonEmpty(a, l, new NonEmpty(b, c, r))
+  */
+  
+  // Version 3 (version 2 improved)
+  
+  //Returns non empty set for the ordered sets (l, c, r) and values (a, b):
+  // l < (a) < c (b) < r
+  def unionIntervals(a: Tweet, b: Tweet, l: TweetSet, c: TweetSet, r: TweetSet) =
+    new NonEmpty(a, l, new NonEmpty(b, c, r))
+  
+  // Returns NonEmpty for two ordered non empty sets: a.elem < b.elem
+  def unionOrdered(a: NonEmpty, b: NonEmpty) =
+    unionIntervals(a.elem, b.elem, 
+        a.left union b.left.getLessThen(a.elem.text),
+        a.right.getLessThen(b.elem.text) union b.left.getGraterThen(a.elem.text),
+        b.right union a.right.getGraterThen(b.elem.text))
+  
+  def union(that: TweetSet): TweetSet = that match {
+    case _:  Empty =>
+      this
+    
+    case ne: NonEmpty  =>
+      if 		(ne.elem.text < elem.text)	unionOrdered(ne, this)
+      else if	(ne.elem.text > elem.text)	unionOrdered(this, ne)
+      else
+        new NonEmpty(elem, left union ne.left, right union ne.right)
+    }
+    
+  def isEmpty: Boolean = false
+  
+  def mostRetweeted: Tweet = {
+    def max(a:Tweet, b: Tweet): Tweet = if (a.retweets > b.retweets) a else b
+    
+    val leftMax  = if (!left.isEmpty ) max(elem, left.mostRetweeted)  else elem
+    val rightMax = if (!right.isEmpty) max(elem, right.mostRetweeted) else elem
+    
+    max(leftMax, rightMax)
+  }
+  
+  def descendingByRetweet: TweetList = {
+    val m = mostRetweeted
+    
+    new Cons(m, remove(m).descendingByRetweet)
+  }
+
   /**
    * The following methods are already implemented
    */
@@ -180,17 +292,26 @@ object GoogleVsApple {
   val google = List("android", "Android", "galaxy", "Galaxy", "nexus", "Nexus")
   val apple = List("ios", "iOS", "iphone", "iPhone", "ipad", "iPad")
 
-    lazy val googleTweets: TweetSet = ???
-  lazy val appleTweets: TweetSet = ???
+  lazy val allTweets = TweetReader.allTweets
   
+  def filterByKeywords(set: TweetSet, keywords: List[String]): TweetSet =
+    set.filter(tweet => keywords.exists(keyword => tweet.text contains keyword))
+  
+  lazy val googleTweets: TweetSet = filterByKeywords(allTweets, google)
+  lazy val appleTweets: TweetSet =  filterByKeywords(allTweets, apple)
+
   /**
    * A list of all tweets mentioning a keyword from either apple or google,
    * sorted by the number of retweets.
    */
-     lazy val trending: TweetList = ???
-  }
+  lazy val trending: TweetList = (googleTweets union appleTweets).descendingByRetweet
+}
 
 object Main extends App {
+  //GoogleVsApple.allTweets foreach println
+  
+  //GoogleVsApple.googleTweets foreach println
+  
   // Print the trending tweets
   GoogleVsApple.trending foreach println
 }
